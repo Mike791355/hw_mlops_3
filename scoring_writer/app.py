@@ -28,8 +28,12 @@ def create_table(conn):
                 transaction_id TEXT NOT NULL,
                 score FLOAT NOT NULL,
                 fraud_flag INT NOT NULL,
+                model_version TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+        """)
+        cur.execute("""
+            ALTER TABLE scores ADD COLUMN IF NOT EXISTS model_version TEXT;
         """)
         conn.commit()
         logger.info("Таблица 'scores' проверена или создана.")
@@ -38,9 +42,14 @@ def create_table(conn):
 def insert_score(conn, data):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO scores (transaction_id, score, fraud_flag)
-            VALUES (%s, %s, %s);
-        """, (data["transaction_id"], data["score"], data["fraud_flag"]))
+            INSERT INTO scores (transaction_id, score, fraud_flag, model_version)
+            VALUES (%s, %s, %s, %s);
+        """, (
+            data["transaction_id"],
+            data["score"],
+            data["fraud_flag"],
+            data.get("model_version"),
+        ))
         conn.commit()
 
 

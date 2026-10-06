@@ -48,7 +48,7 @@ def add_features(df):
 def run_preproc(input_df):
     # Add features
     output_df = add_features(input_df)
-    logger.info('Added new features. Output shape: %s', input_df.shape)
+    logger.info('Added new features. Output shape: %s', output_df.shape)
 
     # Return resulting dataset
     return output_df

@@ -57,7 +57,7 @@ services:
       echo 'Топики успешно созданы:'
       kafka-topics --bootstrap-server kafka:9092 --list
       "
-  
+
   # Сервис для удобного просмотра топиков и настройки kafka
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -80,9 +80,14 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       KAFKA_TRANSACTIONS_TOPIC: "transactions"
       KAFKA_SCORING_TOPIC: "scoring"
+      MODELS_DIR: "/models"
+    volumes:
+      - model_registry:/models
     depends_on:
-      - kafka
-      - kafka-setup
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:15
@@ -104,29 +109,23 @@ services:
       timeout: 10s
       retries: 5
 
-  interface:
-    build: ./interface
+  transaction_simulator:
+    build: ./transaction_simulator
     networks:
       - ml-scorer
-    env_file:
-      - .env
     environment:
-      POSTGRES_HOST: ${POSTGRES_HOST}
-      POSTGRES_PORT: ${POSTGRES_PORT}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       KAFKA_BROKERS: "kafka:9092"
       KAFKA_TOPIC: "transactions"
+      TRANSACTIONS_CSV_PATH: /data/train.csv
+      SEND_INTERVAL_SECONDS: "0.1"
+    volumes:
+      - ${TRAIN_DATA_CSV}:/data/train.csv:ro
     depends_on:
-      postgres:
-        condition: service_healthy
       kafka:
         condition: service_healthy
       kafka-setup:
         condition: service_completed_successfully
-    ports:
-      - "8501:8501"
+    restart: unless-stopped
 
   scoring_writer:
     build: ./scoring_writer
@@ -150,6 +149,68 @@ services:
       kafka-setup:
         condition: service_completed_successfully
 
+  data_loader:
+    build: ./data_loader
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      LABELED_CSV_PATH: /data/train.csv
+      TRAINING_DATA_DIR: /training_data
+    volumes:
+      - ${TRAIN_DATA_CSV}:/data/train.csv:ro
+      - training_data:/training_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow:
+    build: ./airflow
+    user: "0:0"
+    networks:
+      - ml-scorer
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow_state/airflow.db
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+      PYTHONPATH: /opt/airflow
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TRAINING_DATA_DIR: /opt/airflow/training_data
+      MODELS_DIR: /opt/airflow/models
+      FRAUD_SRC: /opt/airflow/fraud_src
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./pipeline:/opt/airflow/pipeline:ro
+      - ./fraud_detector/src:/opt/airflow/fraud_src:ro
+      - training_data:/opt/airflow/training_data
+      - model_registry:/opt/airflow/models
+      - airflow_state:/opt/airflow/airflow_state
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      data_loader:
+        condition: service_completed_successfully
+
 networks:
   ml-scorer:
     name: ml-scorer
@@ -157,3 +218,6 @@ networks:
 
 volumes:
   postgres_data:
+  training_data:
+  model_registry:
+  airflow_state:

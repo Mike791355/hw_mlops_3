@@ -9,7 +9,7 @@ from confluent_kafka import Producer
 
 sys.path.append(os.path.abspath('./src'))  # noqa: PTH100
 from preprocessing import run_preproc
-from scorer import make_pred
+from scorer import ensure_bootstrap, make_pred
 
 
 logging.basicConfig(
@@ -53,14 +53,15 @@ class ProcessingService:
 
             # Препроцессинг и предсказание
             processed_df = run_preproc(input_df)
-            submission, _ = make_pred(processed_df, "kafka_stream")
+            submission, _, model_version = make_pred(processed_df, "kafka_stream")
 
-            # Добавляем ID в результат
+            # Добавляем ID и версию модели, которая отскорила запрос
             submission['transaction_id'] = transaction_id
+            submission['model_version'] = model_version
 
             # Отправка результата в топик scoring
             self.producer.produce(
-                'scoring',
+                SCORING_TOPIC,
                 value=submission.to_json(orient='records'),
             )
             self.producer.flush()
@@ -83,6 +84,7 @@ class ProcessingService:
 
 if __name__ == "__main__":
     logger.info('Starting Kafka ML scoring service...')
+    ensure_bootstrap()
     service = ProcessingService()
     try:
         service.process_messages()
