@@ -5,7 +5,7 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
-from pipeline.db import get_conn
+from pipeline.db import get_conn, read_training_state
 from pipeline.settings import HISTORY_YEARS
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ def prune_old_months(batch_info: dict) -> dict:
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(71021)")
             cur.execute(
                 """
                 SELECT date_trunc('month', max(transaction_time))::date
@@ -32,6 +33,8 @@ def prune_old_months(batch_info: dict) -> dict:
             if newest_month is None:
                 raise RuntimeError("Нечего чистить: витрина labeled_transactions пуста.")
             cutoff = newest_month - relativedelta(years=HISTORY_YEARS)
+            if cutoff > read_training_state(conn)["window_start"]:
+                raise ValueError("Pruning would remove required training history")
             cur.execute(
                 "DELETE FROM labeled_transactions WHERE transaction_time < %s",
                 (cutoff,),

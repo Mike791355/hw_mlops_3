@@ -104,6 +104,19 @@ def ensure_schema(conn):
             );
             """
         )
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                kind TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                batch_month DATE NOT NULL,
+                PRIMARY KEY (kind, run_id)
+            );
+            CREATE TABLE IF NOT EXISTS supplied_months (
+                batch_month DATE PRIMARY KEY,
+                rows_added INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
     conn.commit()
     logger.info("Схема витрины проверена.")
 

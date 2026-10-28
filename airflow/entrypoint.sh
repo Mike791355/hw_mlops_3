@@ -3,6 +3,7 @@ set -euo pipefail
 
 mkdir -p \
   /opt/airflow/models \
+  /opt/airflow/reports \
   /opt/airflow/training_data \
   /opt/airflow/airflow_state \
   /opt/airflow/logs \
@@ -10,6 +11,7 @@ mkdir -p \
 
 # Каталоги общие с data_loader и fraud_detector, которые работают от root.
 chmod 777 \
+  /opt/airflow/reports \
   /opt/airflow/models \
   /opt/airflow/training_data \
   /opt/airflow/airflow_state \

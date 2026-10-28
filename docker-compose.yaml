@@ -74,6 +74,7 @@ services:
 
   fraud_detector:
     build: ./fraud_detector
+    restart: unless-stopped
     networks:
       - ml-scorer
     environment:
@@ -129,6 +130,7 @@ services:
 
   scoring_writer:
     build: ./scoring_writer
+    restart: unless-stopped
     networks:
       - ml-scorer
     env_file:
@@ -173,6 +175,7 @@ services:
 
   airflow:
     build: ./airflow
+    restart: unless-stopped
     user: "0:0"
     networks:
       - ml-scorer
@@ -196,6 +199,7 @@ services:
       TRAINING_DATA_DIR: /opt/airflow/training_data
       MODELS_DIR: /opt/airflow/models
       FRAUD_SRC: /opt/airflow/fraud_src
+      REPORTS_DIR: /opt/airflow/reports
     volumes:
       - ./dags:/opt/airflow/dags
       - ./pipeline:/opt/airflow/pipeline:ro
@@ -203,6 +207,14 @@ services:
       - training_data:/opt/airflow/training_data
       - model_registry:/opt/airflow/models
       - airflow_state:/opt/airflow/airflow_state
+      - ./reports:/opt/airflow/reports
+      - ./tests:/opt/airflow/tests:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8080/health')); assert d['metadatabase']['status']=='healthy' and d['scheduler']['status']=='healthy'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     ports:
       - "8081:8080"
     depends_on:

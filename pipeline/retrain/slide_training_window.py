@@ -1,46 +1,43 @@
 """Сдвиг трёхмесячного окна обучения на один месяц вперёд."""
 
-import logging
 from datetime import date
 
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 
-from pipeline.settings import CURRENT_DATASET, PENDING_WINDOW
-
-logger = logging.getLogger(__name__)
+from pipeline.files import write_parquet
+from pipeline.db import LABELED_COLUMNS, get_conn, month_end_exclusive
+from pipeline.settings import WINDOW_MONTHS
+from pathlib import Path
 
 
 def slide_training_window(batch_info: dict) -> dict:
-    """Добавляет новый месяц к текущему окну и выбрасывает самый старый.
+    """Собирает окно из WINDOW_MONTHS месяцев, заканчивая месяцем батча.
 
-    Читает current.parquet и parquet батча из batch_info. Новое окно пишет
-    в pending_window.parquet и не заменяет current.parquet: замена происходит
-    только после публикации модели, чтобы повтор задачи не сдвинул окно дважды.
-    Возвращает путь к новому окну и месяц добавленного батча.
+    Читает строки из labeled_transactions и сохраняет window.parquet
+    рядом с файлом батча. При повторе использует готовое окно.
+    current.parquet и указатель месяца здесь не меняются.
+    Возвращает путь к окну и метаданные батча.
     """
-    if not CURRENT_DATASET.exists():
-        raise FileNotFoundError(f"Нет исходного датасета {CURRENT_DATASET}")
-
-    batch_month = date.fromisoformat(batch_info["batch_month"])
-    current = pd.read_parquet(CURRENT_DATASET)
-    batch = pd.read_parquet(batch_info["batch_path"])
-    current["transaction_time"] = pd.to_datetime(current["transaction_time"])
-    batch["transaction_time"] = pd.to_datetime(batch["transaction_time"])
-
-    combined = pd.concat([current, batch], ignore_index=True)
-    periods = combined["transaction_time"].dt.to_period("M")
-    oldest = periods.min()
-    updated = combined.loc[periods != oldest].sort_values("transaction_time")
-    updated.to_parquet(PENDING_WINDOW, index=False)
-
-    logger.info(
-        "Окно после сдвига: %s строк, %s — %s. Удалён месяц %s.",
-        len(updated),
-        updated["transaction_time"].min(),
-        updated["transaction_time"].max(),
-        oldest,
-    )
-    return {
-        "dataset_path": str(PENDING_WINDOW),
-        "batch_month": batch_month.isoformat(),
-    }
+    month = date.fromisoformat(batch_info["batch_month"])
+    path = Path(batch_info["batch_path"]).with_name("window.parquet")
+    if not path.exists():
+        start = month - relativedelta(months=WINDOW_MONTHS - 1)
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_xact_lock(71021)")
+            frame = pd.read_sql(
+                f"SELECT {', '.join(LABELED_COLUMNS)} FROM labeled_transactions "
+                "WHERE transaction_time >= %s AND transaction_time < %s ORDER BY transaction_time",
+                conn, params=(start, month_end_exclusive(month)),
+            )
+            expected = pd.period_range(start, month, freq="M")
+            actual = pd.to_datetime(frame.transaction_time).dt.to_period("M").unique()
+            if set(actual) != set(expected):
+                raise ValueError(f"Expected {list(expected)}, found {list(actual)}")
+            write_parquet(frame, path)
+            conn.commit()
+        finally:
+            conn.close()
+    return {**batch_info, "dataset_path": str(path)}
